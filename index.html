@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Gastos</title>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg: #1c1f1d;
+    --panel: #242822;
+    --ink: #eae6da;
+    --ink-dim: #9a9c93;
+    --line: #3a3e37;
+    --gasto: #b5533c;
+    --ingreso: #4f7d5c;
+    --amber: #c98a3b;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height:1.4;
+  }
+  .wrap{ max-width: 480px; margin: 0 auto; padding: 20px 16px 80px; }
+
+  header{ margin-bottom: 18px; }
+  header h1{
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin: 0 0 2px;
+    letter-spacing: -0.01em;
+  }
+  header p{ margin:0; color: var(--ink-dim); font-size: 0.85rem; }
+
+  .mes-selector{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: 14px;
+  }
+  .mes-selector button{
+    background:none; border:none; color: var(--ink); font-size:1.2rem;
+    padding: 4px 10px; cursor:pointer;
+  }
+  .mes-selector span{ font-weight:600; text-transform: capitalize; }
+
+  .resumen{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 18px;
+  }
+  .resumen .fila{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding: 4px 0;
+  }
+  .resumen .fila.total{
+    border-top: 1px solid var(--line);
+    margin-top: 6px; padding-top: 10px;
+  }
+  .resumen .label{ color: var(--ink-dim); font-size: 0.85rem; }
+  .resumen .monto{ font-variant-numeric: tabular-nums; font-weight:600; }
+  .resumen .monto.gasto{ color: var(--gasto); }
+  .resumen .monto.ingreso{ color: var(--ingreso); }
+  .resumen .fila.total .monto{ font-size: 1.3rem; }
+
+  form{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+    display: grid;
+    gap: 10px;
+  }
+  .tipo-toggle{ display:flex; gap:8px; }
+  .tipo-toggle button{
+    flex:1; padding: 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: transparent; color: var(--ink-dim); font-weight:600; cursor:pointer;
+    font-size: 0.9rem;
+  }
+  .tipo-toggle button.active[data-tipo="gasto"]{ background: var(--gasto); color:#fff; border-color: var(--gasto); }
+  .tipo-toggle button.active[data-tipo="ingreso"]{ background: var(--ingreso); color:#fff; border-color: var(--ingreso); }
+
+  label{ font-size: 0.78rem; color: var(--ink-dim); display:block; margin-bottom:3px; }
+  input, select, textarea{
+    width:100%; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 7px; padding: 9px 10px; color: var(--ink); font-size: 0.95rem;
+    font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus{ outline: 1px solid var(--amber); }
+  .row2{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .btn-guardar{
+    background: var(--amber); color: #1c1f1d; border:none; border-radius: 8px;
+    padding: 12px; font-weight:700; font-size: 0.95rem; cursor:pointer; margin-top:4px;
+  }
+  .btn-guardar:active{ transform: scale(0.99); }
+
+  .lista{ display:flex; flex-direction:column; gap: 8px; }
+  .item{
+    background: var(--panel); border:1px solid var(--line); border-radius: 9px;
+    padding: 11px 12px; display:flex; justify-content:space-between; align-items:center;
+    gap: 10px;
+  }
+  .item .info{ min-width:0; }
+  .item .cat{ font-weight:600; font-size:0.92rem; }
+  .item .meta{ color: var(--ink-dim); font-size: 0.76rem; margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .der{ display:flex; align-items:center; gap:10px; flex-shrink:0; }
+  .item .monto{ font-weight:700; font-variant-numeric: tabular-nums; }
+  .item .monto.gasto{ color: var(--gasto); }
+  .item .monto.ingreso{ color: var(--ingreso); }
+  .item .del{ background:none; border:none; color: var(--ink-dim); font-size:1rem; cursor:pointer; padding:2px 4px; }
+
+  .vacio{ text-align:center; color: var(--ink-dim); padding: 30px 0; font-size:0.9rem; }
+  .origen-tag{
+    font-size: 0.68rem; padding: 1px 6px; border-radius: 20px; border:1px solid var(--line);
+    color: var(--ink-dim); white-space:nowrap;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Control de gastos</h1>
+    <p>Cargá rápido, ordená después</p>
+  </header>
+
+  <div class="mes-selector">
+    <button id="mesAnterior">‹</button>
+    <span id="mesLabel">-</span>
+    <button id="mesSiguiente">›</button>
+  </div>
+
+  <div class="resumen">
+    <div class="fila">
+      <span class="label">Ingresos</span>
+      <span class="monto ingreso" id="totalIngresos">$0</span>
+    </div>
+    <div class="fila">
+      <span class="label">Gastos</span>
+      <span class="monto gasto" id="totalGastos">$0</span>
+    </div>
+    <div class="fila total">
+      <span class="label">Saldo del mes</span>
+      <span class="monto" id="totalSaldo">$0</span>
+    </div>
+  </div>
+
+  <form id="formMovimiento">
+    <div class="tipo-toggle">
+      <button type="button" class="active" data-tipo="gasto">Gasto</button>
+      <button type="button" data-tipo="ingreso">Ingreso</button>
+    </div>
+
+    <div class="row2">
+      <div>
+        <label for="monto">Monto</label>
+        <input type="number" id="monto" inputmode="decimal" step="0.01" min="0" required placeholder="0">
+      </div>
+      <div>
+        <label for="fecha">Fecha</label>
+        <input type="date" id="fecha" required>
+      </div>
+    </div>
+
+    <div>
+      <label for="categoria">Categoría</label>
+      <select id="categoria" required></select>
+    </div>
+
+    <div>
+      <label for="descripcion">Descripción (opcional)</label>
+      <input type="text" id="descripcion" placeholder="Detalle breve">
+    </div>
+
+    <div class="row2">
+      <div>
+        <label for="medioPago">Medio de pago</label>
+        <select id="medioPago">
+          <option value="efectivo">Efectivo</option>
+          <option value="transferencia">Transferencia</option>
+          <option value="tarjeta">Tarjeta</option>
+        </select>
+      </div>
+      <div>
+        <label for="origen">Origen</label>
+        <select id="origen">
+          <option value="sin_definir">Sin definir</option>
+          <option value="personal">Personal</option>
+          <option value="polleria">Pollería</option>
+          <option value="electricidad">Electricidad</option>
+        </select>
+      </div>
+    </div>
+
+    <button type="submit" class="btn-guardar">Guardar movimiento</button>
+  </form>
+
+  <div class="lista" id="lista"></div>
+</div>
+
+<script>
+const SUPABASE_URL = "https://ofixvquuradjggbzcpvl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Z6sKOy9VlujAPNVpIIz6Zg_bywUIdpL";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const CATEGORIAS_GASTO = ["Comida", "Transporte", "Servicios", "Salud", "Ocio", "Herramientas", "Pollería", "Otro"];
+const CATEGORIAS_INGRESO = ["Electricidad", "Otro"];
+
+let tipoActual = "gasto";
+let fechaRef = new Date();
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => "$" + Number(n).toLocaleString("es-AR", {minimumFractionDigits:0, maximumFractionDigits:0});
+
+function poblarCategorias(){
+  const opciones = tipoActual === "gasto" ? CATEGORIAS_GASTO : CATEGORIAS_INGRESO;
+  $("categoria").innerHTML = opciones.map(c => `<option value="${c}">${c}</option>`).join("");
+}
+
+document.querySelectorAll(".tipo-toggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tipo-toggle button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    tipoActual = btn.dataset.tipo;
+    poblarCategorias();
+  });
+});
+
+function rangoMes(fecha){
+  const y = fecha.getFullYear(), m = fecha.getMonth();
+  const inicio = new Date(y, m, 1).toISOString().slice(0,10);
+  const fin = new Date(y, m + 1, 0).toISOString().slice(0,10);
+  return {inicio, fin};
+}
+
+function actualizarLabelMes(){
+  $("mesLabel").textContent = fechaRef.toLocaleDateString("es-AR", {month:"long", year:"numeric"});
+}
+
+async function cargarMovimientos(){
+  const {inicio, fin} = rangoMes(fechaRef);
+  const {data, error} = await sb.from("movimientos")
+    .select("*")
+    .gte("fecha", inicio)
+    .lte("fecha", fin)
+    .order("fecha", {ascending:false})
+    .order("created_at", {ascending:false});
+
+  if(error){ console.error(error); return; }
+
+  let totalGastos = 0, totalIngresos = 0;
+  const lista = $("lista");
+  lista.innerHTML = "";
+
+  if(!data.length){
+    lista.innerHTML = `<div class="vacio">No hay movimientos cargados este mes</div>`;
+  }
+
+  data.forEach(mov => {
+    const monto = Number(mov.monto);
+    if(mov.tipo === "gasto") totalGastos += monto; else totalIngresos += monto;
+
+    const div = document.createElement("div");
+    div.className = "item";
+    const fechaCorta = mov.fecha.slice(8,10) + "/" + mov.fecha.slice(5,7);
+    div.innerHTML = `
+      <div class="info">
+        <div class="cat">${mov.categoria}</div>
+        <div class="meta">${fechaCorta}${mov.descripcion ? " · " + mov.descripcion : ""} · ${mov.medio_pago || ""}</div>
+      </div>
+      <div class="der">
+        <span class="origen-tag">${mov.origen === "sin_definir" ? "?" : mov.origen}</span>
+        <span class="monto ${mov.tipo}">${mov.tipo === "gasto" ? "-" : "+"}${fmt(monto)}</span>
+        <button class="del" data-id="${mov.id}">✕</button>
+      </div>
+    `;
+    lista.appendChild(div);
+  });
+
+  $("totalGastos").textContent = fmt(totalGastos);
+  $("totalIngresos").textContent = fmt(totalIngresos);
+  $("totalSaldo").textContent = fmt(totalIngresos - totalGastos);
+
+  document.querySelectorAll(".del").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if(!confirm("¿Borrar este movimiento?")) return;
+      await sb.from("movimientos").delete().eq("id", btn.dataset.id);
+      cargarMovimientos();
+    });
+  });
+}
+
+$("formMovimiento").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const nuevo = {
+    tipo: tipoActual,
+    monto: parseFloat($("monto").value),
+    fecha: $("fecha").value,
+    categoria: $("categoria").value,
+    descripcion: $("descripcion").value || null,
+    medio_pago: $("medioPago").value,
+    origen: $("origen").value
+  };
+  const {error} = await sb.from("movimientos").insert(nuevo);
+  if(error){ alert("Error al guardar: " + error.message); return; }
+
+  $("monto").value = "";
+  $("descripcion").value = "";
+  cargarMovimientos();
+});
+
+$("mesAnterior").addEventListener("click", () => {
+  fechaRef.setMonth(fechaRef.getMonth() - 1);
+  actualizarLabelMes(); cargarMovimientos();
+});
+$("mesSiguiente").addEventListener("click", () => {
+  fechaRef.setMonth(fechaRef.getMonth() + 1);
+  actualizarLabelMes(); cargarMovimientos();
+});
+
+// init
+$("fecha").value = new Date().toISOString().slice(0,10);
+poblarCategorias();
+actualizarLabelMes();
+cargarMovimientos();
+</script>
+</body>
+</html>
