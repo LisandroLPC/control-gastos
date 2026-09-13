@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Control de Gastos</title>
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
   :root{
     --bg: #1c1f1d;
@@ -119,6 +120,39 @@
     font-size: 0.68rem; padding: 1px 6px; border-radius: 20px; border:1px solid var(--line);
     color: var(--ink-dim); white-space:nowrap;
   }
+
+  .panel{
+    background: var(--panel); border:1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 18px;
+  }
+  .panel h2{ font-size: 0.95rem; margin: 0 0 12px; font-weight:600; }
+  .panel-vacio{ color: var(--ink-dim); font-size: 0.85rem; text-align:center; padding: 10px 0; }
+
+  .cat-link{
+    background:none; border:none; color: var(--ink-dim); font-size: 0.78rem;
+    text-decoration: underline; cursor:pointer; padding: 0; margin-top: -4px; margin-bottom: 4px;
+    display:inline-block;
+  }
+  .cat-manager{ display:none; }
+  .cat-manager.open{ display:block; }
+  .cat-manager-tipos{ display:flex; gap:8px; margin-bottom:10px; }
+  .cat-manager-tipos button{
+    flex:1; padding:7px; border-radius:7px; border:1px solid var(--line);
+    background:transparent; color:var(--ink-dim); font-size:0.82rem; cursor:pointer;
+  }
+  .cat-manager-tipos button.active{ background: var(--amber); color:#1c1f1d; border-color: var(--amber); font-weight:600; }
+  .cat-lista{ display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+  .cat-item{
+    display:flex; justify-content:space-between; align-items:center;
+    background: var(--bg); border:1px solid var(--line); border-radius:7px; padding:7px 10px;
+    font-size:0.85rem;
+  }
+  .cat-item button{ background:none; border:none; color: var(--gasto); cursor:pointer; font-size:0.9rem; }
+  .cat-add{ display:flex; gap:8px; }
+  .cat-add input{ flex:1; }
+  .cat-add button{
+    background: var(--ingreso); color:#fff; border:none; border-radius:7px; padding: 0 14px; cursor:pointer; font-weight:600;
+  }
 </style>
 </head>
 <body>
@@ -149,6 +183,12 @@
     </div>
   </div>
 
+  <div class="panel" id="panelGrafico">
+    <h2>Gastos por categoría</h2>
+    <canvas id="graficoCategorias" height="200"></canvas>
+    <div class="panel-vacio" id="graficoVacio" style="display:none;">Sin gastos cargados este mes</div>
+  </div>
+
   <form id="formMovimiento">
     <div class="tipo-toggle">
       <button type="button" class="active" data-tipo="gasto">Gasto</button>
@@ -169,6 +209,19 @@
     <div>
       <label for="categoria">Categoría</label>
       <select id="categoria" required></select>
+      <button type="button" class="cat-link" id="btnGestionarCat">Agregar / editar categorías</button>
+    </div>
+
+    <div class="cat-manager" id="catManager">
+      <div class="cat-manager-tipos">
+        <button type="button" class="active" data-cattipo="gasto">Gasto</button>
+        <button type="button" data-cattipo="ingreso">Ingreso</button>
+      </div>
+      <div class="cat-lista" id="catLista"></div>
+      <div class="cat-add">
+        <input type="text" id="nuevaCategoria" placeholder="Nueva categoría">
+        <button type="button" id="btnAgregarCat">Agregar</button>
+      </div>
     </div>
 
     <div>
@@ -207,17 +260,26 @@ const SUPABASE_URL = "https://ofixvquuradjggbzcpvl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Z6sKOy9VlujAPNVpIIz6Zg_bywUIdpL";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const CATEGORIAS_GASTO = ["Comida", "Transporte", "Servicios", "Salud", "Ocio", "Herramientas", "Pollería", "Otro"];
-const CATEGORIAS_INGRESO = ["Electricidad", "Otro"];
-
+let categorias = { gasto: [], ingreso: [] };
 let tipoActual = "gasto";
+let tipoGestion = "gasto";
 let fechaRef = new Date();
+let chartCategorias = null;
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => "$" + Number(n).toLocaleString("es-AR", {minimumFractionDigits:0, maximumFractionDigits:0});
 
+async function cargarCategorias(){
+  const {data, error} = await sb.from("categorias").select("*").order("nombre");
+  if(error){ console.error(error); return; }
+  categorias = { gasto: [], ingreso: [] };
+  data.forEach(c => categorias[c.tipo].push(c.nombre));
+  poblarCategorias();
+  renderCatLista();
+}
+
 function poblarCategorias(){
-  const opciones = tipoActual === "gasto" ? CATEGORIAS_GASTO : CATEGORIAS_INGRESO;
+  const opciones = categorias[tipoActual] || [];
   $("categoria").innerHTML = opciones.map(c => `<option value="${c}">${c}</option>`).join("");
 }
 
@@ -228,6 +290,48 @@ document.querySelectorAll(".tipo-toggle button").forEach(btn => {
     tipoActual = btn.dataset.tipo;
     poblarCategorias();
   });
+});
+
+// --- Gestión de categorías ---
+$("btnGestionarCat").addEventListener("click", () => {
+  $("catManager").classList.toggle("open");
+});
+
+document.querySelectorAll(".cat-manager-tipos button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".cat-manager-tipos button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    tipoGestion = btn.dataset.cattipo;
+    renderCatLista();
+  });
+});
+
+function renderCatLista(){
+  const lista = $("catLista");
+  const items = categorias[tipoGestion] || [];
+  lista.innerHTML = items.map(nombre => `
+    <div class="cat-item">
+      <span>${nombre}</span>
+      <button data-nombre="${nombre}" class="btnBorrarCat">✕</button>
+    </div>
+  `).join("");
+
+  document.querySelectorAll(".btnBorrarCat").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if(!confirm(`¿Borrar la categoría "${btn.dataset.nombre}"? Los movimientos ya cargados con esta categoría no se modifican.`)) return;
+      await sb.from("categorias").delete().eq("tipo", tipoGestion).eq("nombre", btn.dataset.nombre);
+      await cargarCategorias();
+    });
+  });
+}
+
+$("btnAgregarCat").addEventListener("click", async () => {
+  const nombre = $("nuevaCategoria").value.trim();
+  if(!nombre) return;
+  const {error} = await sb.from("categorias").insert({tipo: tipoGestion, nombre});
+  if(error){ alert("Error: " + (error.message.includes("duplicate") ? "esa categoría ya existe" : error.message)); return; }
+  $("nuevaCategoria").value = "";
+  await cargarCategorias();
 });
 
 function rangoMes(fecha){
@@ -285,12 +389,52 @@ async function cargarMovimientos(){
   $("totalIngresos").textContent = fmt(totalIngresos);
   $("totalSaldo").textContent = fmt(totalIngresos - totalGastos);
 
+  dibujarGrafico(data.filter(m => m.tipo === "gasto"));
+
   document.querySelectorAll(".del").forEach(btn => {
     btn.addEventListener("click", async () => {
       if(!confirm("¿Borrar este movimiento?")) return;
       await sb.from("movimientos").delete().eq("id", btn.dataset.id);
       cargarMovimientos();
     });
+  });
+}
+
+function dibujarGrafico(gastos){
+  const canvas = $("graficoCategorias");
+  if(!gastos.length){
+    canvas.style.display = "none";
+    $("graficoVacio").style.display = "block";
+    if(chartCategorias) chartCategorias.destroy();
+    return;
+  }
+  canvas.style.display = "block";
+  $("graficoVacio").style.display = "none";
+
+  const porCategoria = {};
+  gastos.forEach(g => { porCategoria[g.categoria] = (porCategoria[g.categoria] || 0) + Number(g.monto); });
+  const entradas = Object.entries(porCategoria).sort((a,b) => b[1] - a[1]);
+
+  if(chartCategorias) chartCategorias.destroy();
+  chartCategorias = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: entradas.map(e => e[0]),
+      datasets: [{
+        data: entradas.map(e => e[1]),
+        backgroundColor: "#b5533c",
+        borderRadius: 5,
+      }]
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#9a9c93" }, grid: { color: "#3a3e37" } },
+        y: { ticks: { color: "#eae6da" }, grid: { display: false } }
+      }
+    }
   });
 }
 
@@ -324,8 +468,8 @@ $("mesSiguiente").addEventListener("click", () => {
 
 // init
 $("fecha").value = new Date().toISOString().slice(0,10);
-poblarCategorias();
 actualizarLabelMes();
+cargarCategorias();
 cargarMovimientos();
 </script>
 </body>
