@@ -65,6 +65,7 @@
   .resumen .monto{ font-variant-numeric: tabular-nums; font-weight:600; }
   .resumen .monto.gasto{ color: var(--gasto); }
   .resumen .monto.ingreso{ color: var(--ingreso); }
+  .resumen .monto.neutro{ color: var(--ink-dim); }
   .resumen .fila.total .monto{ font-size: 1.3rem; }
 
   form{
@@ -170,11 +171,19 @@
 
   <div class="resumen">
     <div class="fila">
-      <span class="label">Ingresos</span>
+      <span class="label">Ingresos (electricidad, etc.)</span>
       <span class="monto ingreso" id="totalIngresos">$0</span>
     </div>
     <div class="fila">
-      <span class="label">Gastos</span>
+      <span class="label">Sueldo retirado de pollería</span>
+      <span class="monto ingreso" id="totalPolleria">$0</span>
+    </div>
+    <div class="fila" style="border-top:1px solid var(--line); padding-top:8px;">
+      <span class="label">Total ingresos</span>
+      <span class="monto ingreso" id="totalIngresosGral">$0</span>
+    </div>
+    <div class="fila">
+      <span class="label">Gastos totales</span>
       <span class="monto gasto" id="totalGastos">$0</span>
     </div>
     <div class="fila total">
@@ -356,7 +365,7 @@ async function cargarMovimientos(){
 
   if(error){ console.error(error); return; }
 
-  let totalGastos = 0, totalIngresos = 0;
+  let totalGastos = 0, totalIngresos = 0, totalPolleria = 0;
   const lista = $("lista");
   lista.innerHTML = "";
 
@@ -366,7 +375,12 @@ async function cargarMovimientos(){
 
   data.forEach(mov => {
     const monto = Number(mov.monto);
-    if(mov.tipo === "gasto") totalGastos += monto; else totalIngresos += monto;
+    if(mov.tipo === "gasto"){
+      totalGastos += monto;
+      if(mov.origen === "polleria") totalPolleria += monto;
+    } else {
+      totalIngresos += monto;
+    }
 
     const div = document.createElement("div");
     div.className = "item";
@@ -387,7 +401,9 @@ async function cargarMovimientos(){
 
   $("totalGastos").textContent = fmt(totalGastos);
   $("totalIngresos").textContent = fmt(totalIngresos);
-  $("totalSaldo").textContent = fmt(totalIngresos - totalGastos);
+  $("totalPolleria").textContent = fmt(totalPolleria);
+  $("totalIngresosGral").textContent = fmt(totalIngresos + totalPolleria);
+  $("totalSaldo").textContent = fmt((totalIngresos + totalPolleria) - totalGastos);
 
   dibujarGrafico(data.filter(m => m.tipo === "gasto"));
 
