@@ -94,6 +94,12 @@
   }
   input:focus, select:focus, textarea:focus{ outline: 1px solid var(--amber); }
   .row2{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .fecha-nav{ display:flex; align-items:center; gap: 4px; }
+  .fecha-nav input{ flex:1; }
+  .fecha-nav button{
+    background: var(--bg); border:1px solid var(--line); color: var(--ink);
+    border-radius: 7px; width: 32px; height: 36px; font-size:1.1rem; cursor:pointer; flex-shrink:0;
+  }
 
   .btn-guardar{
     background: var(--amber); color: #1c1f1d; border:none; border-radius: 8px;
@@ -120,6 +126,15 @@
   .origen-tag{
     font-size: 0.68rem; padding: 1px 6px; border-radius: 20px; border:1px solid var(--line);
     color: var(--ink-dim); white-space:nowrap;
+  }
+
+  .filtro-cat{
+    display:flex; justify-content:space-between; align-items:center;
+    background: var(--panel); border:1px solid var(--amber); border-radius: 8px;
+    padding: 8px 12px; margin-bottom: 10px; font-size: 0.85rem;
+  }
+  .filtro-cat button{
+    background:none; border:none; color: var(--amber); font-size: 0.8rem; cursor:pointer; font-weight:600;
   }
 
   .panel{
@@ -211,7 +226,11 @@
       </div>
       <div>
         <label for="fecha">Fecha</label>
-        <input type="date" id="fecha" required>
+        <div class="fecha-nav">
+          <button type="button" id="fechaAtras">‹</button>
+          <input type="date" id="fecha" required>
+          <button type="button" id="fechaAdelante">›</button>
+        </div>
       </div>
     </div>
 
@@ -245,6 +264,7 @@
           <option value="efectivo">Efectivo</option>
           <option value="transferencia">Transferencia</option>
           <option value="tarjeta">Tarjeta</option>
+          <option value="mixto">Mixto</option>
         </select>
       </div>
       <div>
@@ -261,6 +281,11 @@
     <button type="submit" class="btn-guardar">Guardar movimiento</button>
   </form>
 
+  <div class="filtro-cat" id="filtroCatBanner" style="display:none;">
+    <span id="filtroCatTexto"></span>
+    <button type="button" id="btnLimpiarFiltro">Ver todos ✕</button>
+  </div>
+
   <div class="lista" id="lista"></div>
 </div>
 
@@ -274,6 +299,7 @@ let tipoActual = "gasto";
 let tipoGestion = "gasto";
 let fechaRef = new Date();
 let chartCategorias = null;
+let categoriaFiltro = null;
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => "$" + Number(n).toLocaleString("es-AR", {minimumFractionDigits:0, maximumFractionDigits:0});
@@ -369,8 +395,15 @@ async function cargarMovimientos(){
   const lista = $("lista");
   lista.innerHTML = "";
 
-  if(!data.length){
-    lista.innerHTML = `<div class="vacio">No hay movimientos cargados este mes</div>`;
+  const datosFiltrados = categoriaFiltro ? data.filter(m => m.categoria === categoriaFiltro) : data;
+
+  if($("filtroCatBanner")){
+    $("filtroCatBanner").style.display = categoriaFiltro ? "flex" : "none";
+    if(categoriaFiltro) $("filtroCatTexto").textContent = `Mostrando: ${categoriaFiltro}`;
+  }
+
+  if(!datosFiltrados.length){
+    lista.innerHTML = `<div class="vacio">${categoriaFiltro ? "No hay movimientos de esta categoría este mes" : "No hay movimientos cargados este mes"}</div>`;
   }
 
   data.forEach(mov => {
@@ -381,7 +414,10 @@ async function cargarMovimientos(){
     } else {
       totalIngresos += monto;
     }
+  });
 
+  datosFiltrados.forEach(mov => {
+    const monto = Number(mov.monto);
     const div = document.createElement("div");
     div.className = "item";
     const fechaCorta = mov.fecha.slice(8,10) + "/" + mov.fecha.slice(5,7);
@@ -416,6 +452,11 @@ async function cargarMovimientos(){
   });
 }
 
+$("btnLimpiarFiltro").addEventListener("click", () => {
+  categoriaFiltro = null;
+  cargarMovimientos();
+});
+
 function dibujarGrafico(gastos){
   const canvas = $("graficoCategorias");
   if(!gastos.length){
@@ -445,6 +486,16 @@ function dibujarGrafico(gastos){
     options: {
       indexAxis: "y",
       responsive: true,
+      onClick: (evt, elements) => {
+        if(!elements.length) return;
+        const idx = elements[0].index;
+        categoriaFiltro = entradas[idx][0];
+        cargarMovimientos();
+        $("lista").scrollIntoView({behavior:"smooth", block:"start"});
+      },
+      onHover: (evt, elements) => {
+        canvas.style.cursor = elements.length ? "pointer" : "default";
+      },
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { color: "#9a9c93" }, grid: { color: "#3a3e37" } },
@@ -475,12 +526,22 @@ $("formMovimiento").addEventListener("submit", async (e) => {
 
 $("mesAnterior").addEventListener("click", () => {
   fechaRef.setMonth(fechaRef.getMonth() - 1);
+  categoriaFiltro = null;
   actualizarLabelMes(); cargarMovimientos();
 });
 $("mesSiguiente").addEventListener("click", () => {
   fechaRef.setMonth(fechaRef.getMonth() + 1);
+  categoriaFiltro = null;
   actualizarLabelMes(); cargarMovimientos();
 });
+
+function moverFechaForm(dias){
+  const actual = new Date($("fecha").value + "T00:00:00");
+  actual.setDate(actual.getDate() + dias);
+  $("fecha").value = actual.toISOString().slice(0,10);
+}
+$("fechaAtras").addEventListener("click", () => moverFechaForm(-1));
+$("fechaAdelante").addEventListener("click", () => moverFechaForm(1));
 
 // init
 $("fecha").value = new Date().toISOString().slice(0,10);
