@@ -48,6 +48,10 @@ select * from (values
 ) v(nombre, monto, categoria, orden)
 where not exists (select 1 from gastos_fijos);
 
+-- 5) Pedido de Licha (04/10): el ingreso "Dólares" del 24/09 pasa a "Uso de ahorros" (el saldo del mes no cambia)
+update movimientos set tipo='ahorro', categoria='Dólares', origen='personal'
+where id=52 and tipo='ingreso' and monto=310000 and fecha='2026-09-24';
+
 -- Hasta activar la seguridad (Parte 2), las tablas nuevas quedan igual que las viejas
 alter table config disable row level security;
 alter table gastos_fijos disable row level security;
