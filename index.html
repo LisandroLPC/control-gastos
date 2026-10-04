@@ -190,6 +190,15 @@
 
   .fijos .fijo{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); font-size:0.88rem; }
   .fijos .fijo:last-of-type{ border-bottom:none; }
+  .fijos .fijo{ border-left:3px solid transparent; padding-left:8px; margin-left:-8px; }
+  .fijos .fijo.v-rojo{ border-left-color: var(--gasto); }
+  .fijos .fijo.v-naranja{ border-left-color: var(--amber); }
+  .fijos .fijo .izq{ min-width:0; }
+  .fijos .fijo .venc{ font-size:0.74rem; color: var(--ink-dim); }
+  .fijos .fijo.v-rojo .venc{ color: var(--gasto); font-weight:600; }
+  .fijos .fijo.v-naranja .venc{ color: var(--amber); font-weight:600; }
+  .fijos .alerta{ display:none; font-size:0.8rem; border-radius:7px; padding:6px 10px; margin-bottom:8px; border:1px solid var(--amber); color: var(--amber); }
+  .fijos .alerta.rojo{ border-color: var(--gasto); color: var(--gasto); }
   .fijos .fijo .n{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .fijos .fijo .ok{ color: var(--ingreso); font-weight:600; }
   .fijos .fijo .pend{ color: var(--ink-dim); }
@@ -198,11 +207,12 @@
   .fijos .resumen-fijos b{ color: var(--ink); }
   .fijos-editor{ display:none; margin-top:10px; }
   .fijos-editor.open{ display:block; }
-  .fijo-edit{ display:grid; grid-template-columns: 1fr 110px 28px; gap:6px; margin-bottom:6px; align-items:center; }
+  .fijo-edit{ display:grid; grid-template-columns: 1fr 96px 52px 28px; gap:6px; margin-bottom:6px; align-items:center; }
   .fijo-edit input{ padding:6px 8px; font-size:0.85rem; }
   .fijo-edit button{ background:none; border:none; color: var(--gasto); cursor:pointer; font-size:0.95rem; }
-  .fijo-add{ display:grid; grid-template-columns: 1fr 110px; gap:6px; margin-top:4px; }
-  .fijo-add select{ grid-column: 1 / 2; padding:6px 8px; font-size:0.85rem; }
+  .fijo-add{ display:grid; grid-template-columns: 1fr 96px 52px; gap:6px; margin-top:4px; }
+  .fijo-add select{ grid-column: 1 / 3; padding:6px 8px; font-size:0.85rem; }
+  .fijos-hint{ font-size:0.72rem; color: var(--ink-dim); margin:2px 0 6px; }
   .fijo-add button{ background: var(--ingreso); color:#fff; border:none; border-radius:7px; font-weight:600; cursor:pointer; }
   .fijo-add input{ padding:6px 8px; font-size:0.85rem; }
 
@@ -296,14 +306,17 @@
 
   <div class="panel fijos" id="panelFijos">
     <h2>Gastos fijos del mes</h2>
+    <div class="alerta" id="alertaFijos"></div>
     <div id="listaFijos"></div>
     <div class="resumen-fijos"><span>Pagado <b id="fijosPagado">$0</b></span><span>Falta pagar <b id="fijosFalta">$0</b></span></div>
     <button type="button" class="cat-link" id="btnEditarFijos" style="margin-top:8px">Agregar / editar gastos fijos</button>
     <div class="fijos-editor" id="fijosEditor">
+      <div class="fijos-hint">Nombre · monto aprox. · día de vencimiento (1 a 31)</div>
       <div id="fijosEditLista"></div>
       <div class="fijo-add">
         <input type="text" id="fijoNombre" placeholder="Nombre (ej: Internet)">
-        <input type="number" id="fijoMonto" inputmode="numeric" placeholder="Monto aprox.">
+        <input type="number" id="fijoMonto" inputmode="numeric" placeholder="Monto">
+        <input type="number" id="fijoDia" inputmode="numeric" min="1" max="31" placeholder="Día">
         <select id="fijoCategoria"></select>
         <button type="button" id="btnAgregarFijo">Agregar</button>
       </div>
@@ -570,16 +583,45 @@ async function cargarFijos(){
   $("panelFijos").style.display = "";
   fijos = data;
 }
+const AVISO_DIAS = 3; // naranja cuando faltan esta cantidad de días o menos
+function vencimiento(f, pagado){
+  const d = parseInt(f.dia_vencimiento);
+  if(!(d >= 1)) return { txt: "", cls: "", dias: 999 };
+  const y = fechaRef.getFullYear(), m = fechaRef.getMonth();
+  const dia = Math.min(d, new Date(y, m + 1, 0).getDate()); // día 31 en un mes de 30 → día 30
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const dias = Math.round((new Date(y, m, dia) - hoy) / 86400000);
+  const pl = (n) => n + " día" + (n === 1 ? "" : "s");
+  if(pagado) return { txt: "vencía el " + dia, cls: "", dias };
+  if(dias < 0) return { txt: "venció hace " + pl(-dias), cls: "v-rojo", dias };
+  if(dias === 0) return { txt: "vence hoy", cls: "v-naranja", dias };
+  if(dias <= AVISO_DIAS) return { txt: "vence en " + pl(dias), cls: "v-naranja", dias };
+  return { txt: "vence el " + dia, cls: "", dias };
+}
 function renderFijos(){
-  let pagado = 0, falta = 0;
-  $("listaFijos").innerHTML = fijos.length ? fijos.map(f => {
+  let pagado = 0, falta = 0, vencidos = 0, proximos = 0;
+  const filas = fijos.map(f => {
     const pagos = movsMes.filter(m => m.fijo_id === f.id);
     const monto = pagos.reduce((s, m) => s + Number(m.monto), 0);
-    if(pagos.length){ pagado += monto; }
-    else { falta += Number(f.monto); }
-    return `<div class="fijo"><span class="n">${pagos.length ? "✓" : "○"} ${esc(f.nombre)}</span>
-      ${pagos.length ? `<span class="ok">${fmt(monto)}</span>` : `<span class="pend">${fmt(f.monto)}</span><button type="button" data-fijo="${f.id}" class="btnPagarFijo">Pagar</button>`}</div>`;
-  }).join("") : `<div class="panel-vacio">Todavía no cargaste gastos fijos</div>`;
+    const v = vencimiento(f, pagos.length > 0);
+    if(pagos.length) pagado += monto; else falta += Number(f.monto);
+    if(v.cls === "v-rojo") vencidos++;
+    if(v.cls === "v-naranja") proximos++;
+    return { f, pagos, monto, v };
+  });
+  // Primero lo que falta pagar, ordenado por vencimiento; al final lo pagado
+  filas.sort((a, b) => (a.pagos.length > 0) - (b.pagos.length > 0) || a.v.dias - b.v.dias || (a.f.orden || 0) - (b.f.orden || 0));
+  $("listaFijos").innerHTML = filas.length ? filas.map(({f, pagos, monto, v}) => `
+    <div class="fijo ${v.cls}">
+      <div class="izq"><div class="n">${pagos.length ? "✓" : "○"} ${esc(f.nombre)}</div>${v.txt ? `<div class="venc">${v.txt}</div>` : ""}</div>
+      ${pagos.length ? `<span class="ok">${fmt(monto)}</span>` : `<span class="pend">${fmt(f.monto)}</span><button type="button" data-fijo="${f.id}" class="btnPagarFijo">Pagar</button>`}
+    </div>`).join("") : `<div class="panel-vacio">Todavía no cargaste gastos fijos</div>`;
+  const partes = [];
+  if(vencidos) partes.push(vencidos + (vencidos === 1 ? " vencido" : " vencidos"));
+  if(proximos) partes.push(proximos + " por vencer");
+  $("alertaFijos").textContent = partes.length ? "⚠ " + partes.join(" · ") : "";
+  $("alertaFijos").style.display = partes.length ? "block" : "none";
+  $("alertaFijos").classList.toggle("rojo", vencidos > 0);
   $("fijosPagado").textContent = fmt(pagado);
   $("fijosFalta").textContent = fmt(falta);
   document.querySelectorAll(".btnPagarFijo").forEach(btn => btn.addEventListener("click", () => elegirFijo(Number(btn.dataset.fijo))));
@@ -607,11 +649,17 @@ function renderFijosEditor(){
     <div class="fijo-edit">
       <input type="text" value="${esc(f.nombre)}" data-id="${f.id}" data-campo="nombre">
       <input type="number" value="${Number(f.monto)}" data-id="${f.id}" data-campo="monto" inputmode="numeric">
+      <input type="number" value="${f.dia_vencimiento ?? ""}" data-id="${f.id}" data-campo="dia_vencimiento" inputmode="numeric" min="1" max="31" placeholder="Día">
       <button type="button" data-id="${f.id}" class="btnBorrarFijo" title="Quitar">✕</button>
     </div>`).join("");
   document.querySelectorAll(".fijo-edit input").forEach(inp => inp.addEventListener("change", async () => {
-    const campo = inp.dataset.campo, val = campo === "monto" ? (parseFloat(inp.value) || 0) : inp.value.trim();
+    const campo = inp.dataset.campo;
+    let val = campo === "monto" ? (parseFloat(inp.value) || 0) : inp.value.trim();
     if(campo === "nombre" && !val) return;
+    if(campo === "dia_vencimiento"){
+      val = inp.value === "" ? null : parseInt(inp.value);
+      if(val !== null && !(val >= 1 && val <= 31)) return alert("El día tiene que ser entre 1 y 31");
+    }
     const {error} = await sb.from("gastos_fijos").update({[campo]: val}).eq("id", inp.dataset.id);
     if(error) return manejarError(error, "actualizar el gasto fijo");
     await cargarFijos(); renderFijos();
@@ -625,10 +673,14 @@ function renderFijosEditor(){
 }
 $("btnAgregarFijo").addEventListener("click", async () => {
   const nombre = $("fijoNombre").value.trim(), monto = parseFloat($("fijoMonto").value) || 0;
+  const dia = $("fijoDia").value === "" ? null : parseInt($("fijoDia").value);
   if(!nombre) return alert("Poné un nombre");
-  const {error} = await sb.from("gastos_fijos").insert({nombre, monto, categoria: $("fijoCategoria").value || null, orden: fijos.length + 1});
+  if(dia !== null && !(dia >= 1 && dia <= 31)) return alert("El día tiene que ser entre 1 y 31");
+  const fila = {nombre, monto, categoria: $("fijoCategoria").value || null, orden: fijos.length + 1};
+  if(dia !== null) fila.dia_vencimiento = dia;
+  const {error} = await sb.from("gastos_fijos").insert(fila);
   if(error) return manejarError(error, "agregar el gasto fijo");
-  $("fijoNombre").value = ""; $("fijoMonto").value = "";
+  $("fijoNombre").value = ""; $("fijoMonto").value = ""; $("fijoDia").value = "";
   await cargarFijos(); renderFijos();
 });
 
