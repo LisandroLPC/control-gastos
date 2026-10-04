@@ -120,6 +120,15 @@
   .item .monto{ font-weight:700; font-variant-numeric: tabular-nums; }
   .item .monto.gasto{ color: var(--gasto); }
   .item .monto.ingreso{ color: var(--ingreso); }
+  .item .edit{ background:none; border:none; color: var(--ink-dim); font-size:1rem; cursor:pointer; padding:2px 4px; }
+  .item.editando{ border-color: var(--amber); }
+  form.editando{ border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+  .edit-titulo{ display:none; font-size:0.85rem; font-weight:600; color: var(--amber); }
+  form.editando .edit-titulo{ display:block; }
+  .botones{ display:flex; gap:8px; }
+  .botones .btn-guardar{ flex:1; }
+  .btn-cancelar{ display:none; background:none; border:1px solid var(--line); color: var(--ink-dim); border-radius:8px; padding:12px 16px; font-weight:600; cursor:pointer; margin-top:4px; }
+  form.editando .btn-cancelar{ display:block; }
   .item .del{ background:none; border:none; color: var(--ink-dim); font-size:1rem; cursor:pointer; padding:2px 4px; }
 
   .vacio{ text-align:center; color: var(--ink-dim); padding: 30px 0; font-size:0.9rem; }
@@ -330,6 +339,7 @@
   </div>
 
   <form id="formMovimiento">
+    <div class="edit-titulo" id="editTitulo">✎ Editando movimiento</div>
     <div class="tipo-toggle">
       <button type="button" class="active" data-tipo="gasto">Gasto</button>
       <button type="button" data-tipo="ingreso">Ingreso</button>
@@ -418,7 +428,10 @@
       <div class="resto" id="restoDividir">El resto va al 2do origen.</div>
     </div>
 
-    <button type="submit" class="btn-guardar">Guardar movimiento</button>
+    <div class="botones">
+      <button type="submit" class="btn-guardar" id="btnGuardarMov">Guardar movimiento</button>
+      <button type="button" class="btn-cancelar" id="btnCancelarEdicion">Cancelar</button>
+    </div>
   </form>
 
   <div class="filtro-cat" id="filtroCatBanner" style="display:none;">
@@ -446,6 +459,7 @@ let tope = TOPE_DEFAULT;
 let fijos = [];
 let fijoSeleccionado = null;
 let movsMes = [];
+let editandoId = null;
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => "$" + Number(n).toLocaleString("es-AR", {minimumFractionDigits:0, maximumFractionDigits:0});
@@ -500,7 +514,7 @@ function setTipo(tipo){
   poblarCategorias();
   const esGasto = tipo === "gasto";
   $("wrapOrigen").style.visibility = tipo === "ahorro" ? "hidden" : "visible";
-  $("wrapDividir").style.display = esGasto ? "flex" : "none";
+  $("wrapDividir").style.display = esGasto && !editandoId ? "flex" : "none";
   if(!esGasto){ $("chkDividir").checked = false; $("dividir").classList.remove("open"); quitarFijo(); }
 }
 document.querySelectorAll(".tipo-toggle button").forEach(btn => btn.addEventListener("click", () => setTipo(btn.dataset.tipo)));
@@ -718,7 +732,7 @@ async function cargarMovimientos(){
   datosFiltrados.forEach(mov => {
     const monto = Number(mov.monto);
     const div = document.createElement("div");
-    div.className = "item";
+    div.className = "item" + (mov.id === editandoId ? " editando" : "");
     const fechaCorta = mov.fecha.slice(8,10) + "/" + mov.fecha.slice(5,7);
     const signo = mov.tipo === "gasto" ? "-" : "+";
     const tag = mov.tipo === "ahorro" ? "ahorros" : (ORIGENES[mov.origen] || mov.origen);
@@ -730,6 +744,7 @@ async function cargarMovimientos(){
       <div class="der">
         <span class="origen-tag">${esc(tag)}</span>
         <span class="monto ${mov.tipo}">${signo}${fmt(monto)}</span>
+        <button class="edit" data-id="${mov.id}" title="Editar">✎</button>
         <button class="del" data-id="${mov.id}" data-grupo="${esc(mov.grupo || "")}">✕</button>
       </div>`;
     lista.appendChild(div);
@@ -747,6 +762,7 @@ async function cargarMovimientos(){
   renderFijos();
   dibujarGrafico(data.filter(m => m.tipo === "gasto"));
 
+  document.querySelectorAll(".item .edit").forEach(btn => btn.addEventListener("click", () => editarMov(Number(btn.dataset.id))));
   document.querySelectorAll(".del").forEach(btn => {
     btn.addEventListener("click", async () => {
       const grupo = btn.dataset.grupo;
@@ -754,6 +770,7 @@ async function cargarMovimientos(){
       const q = sb.from("movimientos").delete();
       const {error} = grupo ? await q.eq("grupo", grupo) : await q.eq("id", btn.dataset.id);
       if(error) return manejarError(error, "borrar");
+      if(editandoId === Number(btn.dataset.id) || (grupo && movsMes.some(m => m.id === editandoId && m.grupo === grupo))) salirEdicion();
       cargarMovimientos();
     });
   });
@@ -807,6 +824,46 @@ function actualizarResto(){
 }
 ["monto","monto1","origen","origen2"].forEach(id => $(id).addEventListener("input", actualizarResto));
 
+// --- Editar ---
+function editarMov(id){
+  const mov = movsMes.find(m => m.id === id); if(!mov) return;
+  editandoId = id;
+  $("chkDividir").checked = false; $("dividir").classList.remove("open");
+  setTipo(mov.tipo);
+  $("monto").value = Number(mov.monto);
+  $("fecha").value = mov.fecha;
+  if(![...$("categoria").options].some(o => o.value === mov.categoria)){
+    const o = document.createElement("option"); o.value = o.textContent = mov.categoria; $("categoria").appendChild(o);
+  }
+  $("categoria").value = mov.categoria;
+  $("descripcion").value = mov.descripcion || "";
+  $("medioPago").value = mov.medio_pago || "efectivo";
+  if(mov.tipo !== "ahorro") $("origen").value = mov.origen || "sin_definir";
+  const fijo = mov.fijo_id ? fijos.find(f => f.id === mov.fijo_id) : null;
+  fijoSeleccionado = mov.fijo_id || null;
+  if(fijoSeleccionado){
+    $("avisoFijoTexto").textContent = "Pago del gasto fijo: " + (fijo ? fijo.nombre : "(ya no está en la lista)");
+    $("avisoFijo").classList.add("open");
+  } else quitarFijo();
+  $("editTitulo").textContent = "✎ Editando movimiento" + (mov.grupo ? " (es una de las 2 partes de un gasto dividido)" : "");
+  $("formMovimiento").classList.add("editando");
+  $("btnGuardarMov").textContent = "Guardar cambios";
+  document.querySelectorAll(".item").forEach(el => el.classList.toggle("editando", !!el.querySelector(`.edit[data-id="${id}"]`)));
+  $("formMovimiento").scrollIntoView({behavior:"smooth", block:"start"});
+}
+function salirEdicion(){
+  if(!editandoId) return;
+  editandoId = null;
+  $("formMovimiento").classList.remove("editando");
+  $("btnGuardarMov").textContent = "Guardar movimiento";
+  $("monto").value = ""; $("descripcion").value = "";
+  $("fecha").value = fechaLocal(new Date());
+  quitarFijo();
+  setTipo("gasto");
+  document.querySelectorAll(".item.editando").forEach(el => el.classList.remove("editando"));
+}
+$("btnCancelarEdicion").addEventListener("click", salirEdicion);
+
 $("formMovimiento").addEventListener("submit", async (e) => {
   e.preventDefault();
   const total = parseFloat($("monto").value);
@@ -821,6 +878,15 @@ $("formMovimiento").addEventListener("submit", async (e) => {
     fijo_id: tipoActual === "gasto" ? fijoSeleccionado : null
   };
   if(!base.categoria) return alert("Elegí una categoría");
+  if(editandoId){
+    const btnE = e.submitter; if(btnE) btnE.disabled = true;
+    const {error} = await sb.from("movimientos").update({...base, monto: total}).eq("id", editandoId);
+    if(btnE) btnE.disabled = false;
+    if(error) return manejarError(error, "guardar los cambios");
+    salirEdicion();
+    cargarMovimientos();
+    return;
+  }
   let filas;
   if(tipoActual === "gasto" && $("chkDividir").checked){
     const m1 = parseFloat($("monto1").value) || 0;
@@ -842,8 +908,8 @@ $("formMovimiento").addEventListener("submit", async (e) => {
   cargarMovimientos();
 });
 
-$("mesAnterior").addEventListener("click", () => { fechaRef.setDate(1); fechaRef.setMonth(fechaRef.getMonth() - 1); categoriaFiltro = null; actualizarLabelMes(); cargarMovimientos(); });
-$("mesSiguiente").addEventListener("click", () => { fechaRef.setDate(1); fechaRef.setMonth(fechaRef.getMonth() + 1); categoriaFiltro = null; actualizarLabelMes(); cargarMovimientos(); });
+$("mesAnterior").addEventListener("click", () => { salirEdicion(); fechaRef.setDate(1); fechaRef.setMonth(fechaRef.getMonth() - 1); categoriaFiltro = null; actualizarLabelMes(); cargarMovimientos(); });
+$("mesSiguiente").addEventListener("click", () => { salirEdicion(); fechaRef.setDate(1); fechaRef.setMonth(fechaRef.getMonth() + 1); categoriaFiltro = null; actualizarLabelMes(); cargarMovimientos(); });
 
 function moverFechaForm(dias){
   const actual = new Date($("fecha").value + "T12:00:00");
